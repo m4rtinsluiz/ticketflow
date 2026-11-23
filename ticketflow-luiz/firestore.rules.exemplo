@@ -1,0 +1,48 @@
+// EXEMPLO de regras do Firestore para a compra de ingressos e o cadastro de usuários.
+// Não substitui as suas regras: junte estes trechos com o que você já tem no
+// Console do Firebase > Firestore Database > Regras. Revise antes de publicar.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function logado() {
+      return request.auth != null;
+    }
+
+    function ehAdmin() {
+      return logado()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.papel == 'admin';
+    }
+
+    // Perfil: cada pessoa lê o próprio e só pode se cadastrar como "comum".
+    match /usuarios/{uid} {
+      allow read: if logado() && request.auth.uid == uid;
+      allow create: if logado() && request.auth.uid == uid
+        && request.resource.data.papel == 'comum';
+      allow update, delete: if ehAdmin();
+    }
+
+    // Ingressos: qualquer usuário logado lê; só o admin edita tudo.
+    // Quem compra só pode DIMINUIR a quantidade disponível (e marcar como esgotado).
+    match /ingressos/{id} {
+      allow read: if logado();
+      allow create, delete: if ehAdmin();
+      allow update: if ehAdmin()
+        || (logado()
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['quantidadeDisponivel', 'status'])
+          && request.resource.data.quantidadeDisponivel >= 0
+          && request.resource.data.quantidadeDisponivel < resource.data.quantidadeDisponivel
+          && (request.resource.data.status == resource.data.status
+              || request.resource.data.status == 'Esgotado'));
+    }
+
+    // As demais coleções (eventos, artistas, local, divulgacao): leitura para logados,
+    // escrita só do admin.
+    match /{colecao}/{id} {
+      allow read: if logado();
+      allow write: if ehAdmin();
+    }
+  }
+}
